@@ -59,6 +59,8 @@ dependencies = [
 [[package]]
 name = "resilient"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83564958901e59af9619ae36037bb751c8a951c80117d1c366f6b53046c7077e"
 dependencies = [
  "fastrand",
  "futures-util",

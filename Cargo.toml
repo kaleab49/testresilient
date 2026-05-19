@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+resilient = "0.1.0"
 
 
-resilient = { path = "../resilient" }
 tokio = "1.52.3"

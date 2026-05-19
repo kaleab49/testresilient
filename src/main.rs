@@ -1,10 +1,33 @@
+use resilient::circuit_breaker::BreakerPolicy;
 use resilient::pipeline::Pipeline;
 use resilient::retry_policy::RetryPolicy;
-use resilient::timeout::TimeoutPolicy;
-use resilient::circuit_breaker::BreakerPolicy;
-use std::time::Duration;
+use resilient::timeout::{TimeoutError, TimeoutPolicy};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::fmt;
+use std::time::Duration;
+
+/// Local error type so we can implement `From<TimeoutError>` (orphan rules).
+#[derive(Clone, Debug)]
+struct AppError(String);
+
+impl fmt::Display for AppError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<String> for AppError {
+    fn from(msg: String) -> Self {
+        Self(msg)
+    }
+}
+
+impl From<TimeoutError> for AppError {
+    fn from(err: TimeoutError) -> Self {
+        Self(err.to_string())
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -26,7 +49,7 @@ async fn test_success() {
         .with_timeout(TimeoutPolicy::default().with_timeout(Duration::from_secs(5)));
 
     let result = pipeline.run(&mut || async {
-        Ok::<String, String>("success".into())
+        Ok::<String, AppError>("success".into())
     }).await;
 
     match result {
@@ -42,7 +65,7 @@ async fn test_timeout() {
 
     let result = policy.run(&mut || async {
         tokio::time::sleep(Duration::from_secs(2)).await;
-        Ok::<String, String>("success".into())
+        Ok::<String, AppError>("success".into())
     }).await;
 
     match result {
@@ -59,12 +82,12 @@ async fn test_retry() {
 
     let policy = RetryPolicy::default().with_max_retries(3);
 
-    let result = policy.run(&mut || {
+    let result: Result<String, AppError> = policy.run(&mut || {
         let attempt_clone = attempt_clone.clone();
         async move {
             let count = attempt_clone.fetch_add(1, Ordering::SeqCst);
             if count < 2 {
-                Err::<String, String>(format!("attempt {}: failed", count))
+                Err(AppError::from(format!("attempt {}: failed", count)))
             } else {
                 Ok("success after retries".into())
             }
@@ -85,7 +108,7 @@ async fn test_circuit_breaker() {
     // First 3 operations fail
     for i in 0..3 {
         let result: Result<String, _> = breaker.run(&mut || async {
-            Err::<String, String>("simulated error".into())
+            Err(AppError::from("simulated error".to_string()))
         }).await;
 
         if result.is_err() {
@@ -95,7 +118,7 @@ async fn test_circuit_breaker() {
 
     // Next operation should be rejected by the circuit breaker
     let result: Result<String, _> = breaker.run(&mut || async {
-        Ok::<String, String>("success".into())
+        Ok::<String, AppError>("success".into())
     }).await;
 
     if result.is_err() {
@@ -116,12 +139,12 @@ async fn test_combined_pipeline() {
         .with_timeout(TimeoutPolicy::default().with_timeout(Duration::from_secs(5)))
         .with_circuit_breaker(BreakerPolicy::default());
 
-    let result = pipeline.run(&mut || {
+    let result: Result<String, AppError> = pipeline.run(&mut || {
         let attempt_clone = attempt_clone.clone();
         async move {
             let count = attempt_clone.fetch_add(1, Ordering::SeqCst);
             if count < 1 {
-                Err::<String, String>("temporary failure".into())
+                Err(AppError::from("temporary failure".to_string()))
             } else {
                 Ok("recovered successfully".into())
             }
